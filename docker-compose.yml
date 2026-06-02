@@ -1,0 +1,54 @@
+services:
+  db:
+    image: postgres:16
+    container_name: novastore-db
+    environment:
+      POSTGRES_USER: student
+      POSTGRES_PASSWORD: student
+      POSTGRES_DB: novastore
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U student -d novastore"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: novastore-redis
+    ports:
+      - "6379:6379"
+
+  api:
+    build: ./api
+    container_name: novastore-api
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: novastore
+      DB_USER: student
+      DB_PASSWORD: student
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "5001:5000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./api:/app
+
+  client:
+    build: ./client
+    container_name: novastore-client
+    environment:
+      API_BASE_URL: http://api:5000
+    depends_on:
+      - api
+    volumes:
+      - ./client:/app
