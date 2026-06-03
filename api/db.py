@@ -21,7 +21,6 @@ def get_connection():
         password=os.getenv("DB_PASSWORD", "student"),
     )
 
-
 def _convert_product(row):
     """
     Converts a database row into a JSON-friendly dictionary.
@@ -41,48 +40,151 @@ def _convert_product(row):
 
     return product
 
+def get_all_categories_from_db():
 
-def get_all_products_from_db(category=None, sort=None):
+    query = """
+        SELECT
+            id,
+            name
+        FROM categories
+        ORDER BY name;
     """
-    TODO:
-    Den här funktionen fungerar redan som referensimplementation.
-
-    Läs SQL-frågan och förstå hur API:et hämtar data från PostgreSQL.
-    """
-
-    order_clause = "ORDER BY id"
-
-    if sort == "price":
-        order_clause = "ORDER BY price ASC"
-    elif sort == "price_desc":
-        order_clause = "ORDER BY price DESC"
-
-    if category:
-        query = f"""
-            SELECT id, name, price, category, stock, created_at
-            FROM products
-            WHERE category = %s
-            {order_clause};
-        """
-
-    else:
-        query = f"""
-            SELECT id, name, price, category, stock, created_at
-            FROM products
-            {order_clause};
-        """
 
     with get_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
             
-            if category:
-                cur.execute(query, (category,))
-            else:
-                cur.execute(query)
+            cur.execute(query)
+            rows = cur.fetchall()
+    
+    return [dict(row) for row in rows]
+
+def get_all_products_from_db(category=None, 
+                             sort=None, 
+                             search=None,
+                             page=1,
+                             limit=10
+):
+    
+    order_clause = "ORDER BY p.id"
+
+    if sort == "price":
+        order_clause = "ORDER BY p.price ASC"
+    elif sort == "price_desc":
+        order_clause = "ORDER BY p.price DESC"
+
+    conditions = []
+    params = []
+
+    if category:
+        conditions.append(
+            "c.name = %s"
+        )
+        params.append(category)
+
+    if search:
+        conditions.append(
+            "p.name ILIKE %s"
+        )
+        params.append(f"%{search}%")
+    
+    where_clause = ""
+    offset = (page - 1) * limit
+    params.append(limit)
+    params.append(offset)
+
+    if conditions:
+        where_clause = (
+            "WHERE "
+            + " AND ".join(conditions)
+        )
+    
+    
+    query = f"""
+        SELECT
+            p.id,
+            p.name,
+            p.price,
+            c.name AS category,
+            p.stock,
+            p.created_at
+        FROM products p
+        JOIN categories c
+        ON p.category_id = c.id
+        {where_clause}
+        {order_clause}
+        LIMIT %s
+        OFFSET %s
+    """
+
+    with get_connection() as conn:
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor 
+        ) as cur:
             
+            cur.execute(query, params)
             rows = cur.fetchall()
 
     return [_convert_product(row) for row in rows]
+
+def get_products_by_category_id(category_id):
+
+    query = """
+        SELECT
+            p.id,
+            p.name,
+            p.price,
+            c.name AS category,
+            p.stock,
+            p.created_at
+        FROM products p
+        JOIN categories c
+        ON p.category_id = c.id
+        WHERE c.id = %s
+        ORDER BY p.id;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
+            
+            cur.execute(query, (category_id,))
+            rows = cur.fetchall()
+
+    return [_convert_product(row)
+            for row in rows]
+
+def get_category_by_id(category_id):
+
+    query = """
+        SELECT
+            c.id,
+            c.name,
+            COUNT(p.id) AS product_count
+        FROM categories c
+        LEFT JOIN products p
+        ON p.category_id = c.id
+        WHERE c.id = %s
+        GROUP BY
+            c.id,
+            c.name;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
+            
+            cur.execute(query, (category_id,))
+            row = cur.fetchone()
+
+    if row is None:
+        return None
+    
+    row["product_count"] = int(row["product_count"])
+    return dict(row)
 
 def get_product_stock_from_db(product_id):
 
@@ -127,26 +229,19 @@ def get_product_price_from_db(product_id):
         return float(row["price"])
 
 def get_product_by_id_from_db(product_id):
-    """
-    TODO:
-    Implementera den här funktionen i Del 2 (Uppgift 5).
-
-    Den ska:
-    - Fråga PostgreSQL efter en produkt baserat på id
-    - Returnera produkten som en dictionary om den finns
-    - Returnera None om produkten inte finns
-
-    Föreslagen SQL:
-        SELECT id, name, price, category, stock, created_at
-        FROM products
-        WHERE id = %s;
-    """
-    # TODO: Ersätt detta med en riktig SQL-fråga.
-
+    
     query = """
-        SELECT id, name, price, category, stock, created_at
-        FROM products
-        WHERE id = %s;
+        SELECT 
+            p.id, 
+            p.name, 
+            p.price, 
+            c.name AS category, 
+            p.stock, 
+            p.created_at
+        FROM products p
+        JOIN categories c
+        ON p.category_id = c.id
+        WHERE p.id = %s;
     """
     
     with get_connection() as conn:
@@ -158,21 +253,8 @@ def get_product_by_id_from_db(product_id):
             row = cur.fetchone()
     return _convert_product(row)
 
-
 def insert_product_into_db(product):
-    """
-    TODO:
-    Implementera den här funktionen i Del 3 (Uppgift 8).
-
-    Den ska spara en ny produkt i PostgreSQL och returnera den skapade produkten.
-
-    Föreslagen SQL:
-        INSERT INTO products (name, price, category, stock)
-        VALUES (%s, %s, %s, %s)
-        RETURNING id, name, price, category, stock, created_at;
-    """
-    # TODO: Ersätt detta med en riktig INSERT-fråga.
-
+   
     query = """
         INSERT INTO products 
         (name, price, category, stock)
@@ -203,6 +285,25 @@ def insert_product_into_db(product):
             row = cur.fetchone()
 
     return _convert_product(row)
+
+def insert_category_into_db(name):
+
+    query = """
+        INSERT INTO categories(name)
+        VALUES (%s)
+        RETURNING
+            id,
+            name;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
+            
+            cur.execute(query, (name,))
+            row = cur.fetchone()
+    return dict(row)
 
 def decrease_stock(product_id):
 
@@ -315,4 +416,65 @@ def patch_product_in_db(product_id, data):
             cur.execute(query, values)
             row = cur.fetchone()
     
+    return _convert_product(row)
+
+def get_stats_from_db():
+
+    query = """
+        SELECT
+            COUNT(*) AS total_products,
+            COALESCE(SUM(stock), 0) AS total_stock,
+            COALESCE(AVG(price), 0) AS average_price,
+            COALESCE(MIN(price), 0) AS cheapest_price,
+            COALESCE(MAX(price), 0) AS most_expensive_price
+        FROM products;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
+            
+            cur.execute(query)
+            product_stats = cur.fetchone()
+
+            cur.execute("""
+                SELECT COUNT(*) AS total_categories
+                FROM categories;
+            """)
+
+            category_stats = cur.fetchone()
+
+    return {
+        "total_products":int(product_stats["total_products"]),
+        "total_categories": int(category_stats["total_categories"]),
+        "total_stock": int(product_stats["total_stock"]),
+        "average_price": float(product_stats["average_price"]),
+        "cheapest_price": float(product_stats["cheapest_price"]),
+        "most_expensive_price": float(product_stats["most_expensive_price"])
+    }
+
+def delete_product_from_db(product_id):
+
+    query = """
+        DELETE FROM products
+        WHERE id = %s
+        RETURNING
+            id,
+            name,
+            price,
+            category,
+            stock,
+            created_at;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
+            
+            cur.execute(query, (product_id,))
+
+            row = cur.fetchone()
+
     return _convert_product(row)

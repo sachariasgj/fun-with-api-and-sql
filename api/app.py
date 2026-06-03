@@ -11,12 +11,19 @@ from db import (
     decrease_stock,
     update_product_in_db,
     patch_product_in_db,
+    delete_product_from_db,
+    insert_category_into_db,
+    get_all_categories_from_db,
+    get_products_by_category_id,
+    get_category_by_id,
+    get_stats_from_db,
     
 )
 from cache import (
     get_cached_products,
     set_cached_products,
     clear_products_cache,
+    clear_product_cache,
     set_cached_product,
     get_cached_product,
     _products_key,
@@ -26,6 +33,73 @@ from cache import (
 )
 
 app = Flask(__name__)
+
+@app.get("/stats")
+def get_stats():
+
+    stats = get_stats_from_db()
+
+    return jsonify(stats), 200
+
+@app.get("/categories/<int:category_id>")
+def get_category(category_id):
+
+    category = get_category_by_id(category_id)
+
+    if category is None:
+        return jsonify({
+            "error": "Category not found"
+        }), 404
+    
+    return jsonify(category), 200
+
+@app.get("/categories/<int:category_id>/products")
+def get_category_products(category_id):
+
+    products = get_products_by_category_id(category_id)
+    return jsonify(products), 200
+
+@app.post("/categories")
+def create_category():
+
+    data = request.get_json(silent=True)
+
+    if not data:
+        return jsonify({
+            "error": "Missing JSON body"
+        }), 400
+    
+    if "name" not in data:
+        return jsonify({
+            "error": "Name is required"
+        }), 400
+    
+    category = insert_category_into_db(data["name"])
+    return jsonify(category), 201
+
+@app.get("/categories")
+def get_categories():
+    
+    categories = get_all_categories_from_db()
+
+    return jsonify(categories), 200
+
+@app.delete("/products/<int:product_id>")
+def delete_product(product_id):
+
+    product = delete_product_from_db(product_id)
+
+    if product is None:
+        return jsonify({
+            "error": "Product not found"
+        }), 404
+    clear_products_cache(product_id)
+    clear_products_cache()
+
+    return jsonify({
+        "message": "Product deleted",
+        "product": product
+    }), 200
 
 @app.patch("/products/<int:product_id>")
 def patch_product(product_id):
@@ -58,7 +132,7 @@ def patch_product(product_id):
             "error": "Product not found"
         }), 404
     
-    clear_products_cache(product_id)
+    clear_product_cache(product_id)
     clear_products_cache()
 
     return jsonify(product), 200
@@ -121,27 +195,37 @@ def update_product(product_id):
 def health():
     return jsonify({"status": "ok"})
 
-
 @app.get("/products")
 def get_products():
-    """
-    Del 2:
-    Den här endpointen hämtar redan produkter från PostgreSQL.
-
-    Del 4:
-    Studenterna ska senare bygga ut endpointen med Redis-cache.
-    """
-    # TODO Del 4 (Uppgift 12-15):
-    # 1. Kontrollera Redis först med get_cached_products()
-    # 2. Om cache finns: skriv ut "CACHE HIT" och returnera cachead JSON
-    # 3. Om cache saknas: skriv ut "CACHE MISS" och läs från PostgreSQL
-    # 4. Spara resultatet i Redis med set_cached_products()
-
-    # products = get_all_products_from_db()
+    
     category = request.args.get("category")
     sort = request.args.get("sort")
+    search = request.args.get("search")
+        
+    try:
+        page = int(request.args.get("page", 1))
+        limit = int(request.args.get("limit", 10))
+    except ValueError:
+        return jsonify({
+            "error": "page and limit must be integers"
+        }), 400
 
-    cached_products = get_cached_products(category)
+    if page < 1:
+        page = 1
+    
+    if limit < 1:
+        limit = 10
+    
+    if limit > 100:
+        limit = 100
+
+    cached_products = get_cached_products(
+        category,
+        search,
+        sort,
+        page,
+        limit
+    )
     print("CACHE CONTENT:", cached_products)
 
     if cached_products:
@@ -153,14 +237,22 @@ def get_products():
     
     print("CACHE MISS", flush=True)
     
-    products = get_all_products_from_db(category, sort)
+    products = get_all_products_from_db(category, 
+                                        sort, 
+                                        search,
+                                        page,
+                                        limit
+    )
     
     set_cached_products(
         json.dumps(products),
-        category
+        category,
+        search,
+        sort,
+        page,
+        limit
     )
     return jsonify(products), 200
-
 
 @app.get("/products/<int:product_id>")
 def get_product(product_id):
@@ -231,7 +323,6 @@ def get_product(product_id):
     #     "hint": "Använd get_product_by_id_from_db(product_id) i db.py"
     # }), 501
 
-
 @app.post("/products")
 def create_product():
     """
@@ -288,14 +379,12 @@ def create_product():
     #     "received": data
     # }), 501
 
-
 @app.get("/crash")
 def crash():
     """
     Optional endpoint for discussing 500 Internal Server Error.
     """
     raise Exception("Simulated server error")
-
 
 @app.errorhandler(500)
 def internal_server_error(error):
@@ -317,7 +406,6 @@ def purchase_product(product_id):
         "message": "Purchase successful",
         "stock": new_stock
     }), 200
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
