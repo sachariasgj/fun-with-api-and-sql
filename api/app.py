@@ -29,6 +29,9 @@ from cache import (
     _products_key,
     set_cached_price,
     set_cached_stock,
+    get_cached_categories,
+    set_cached_categories,
+    clear_categories_cache,
     
 )
 
@@ -75,12 +78,28 @@ def create_category():
         }), 400
     
     category = insert_category_into_db(data["name"])
+    clear_categories_cache()
     return jsonify(category), 201
 
 @app.get("/categories")
 def get_categories():
     
+    cached_categories = get_cached_categories()
+
+    if cached_categories:
+
+        print("CATEGORIES CACHE HIT", flush=True)
+        return jsonify(
+            json.loads(cached_categories)
+        ), 200
+    
+    print("CATEGORIES CACHE MISS", flush=True)
+
     categories = get_all_categories_from_db()
+
+    set_cached_categories(
+        json.dumps(categories)
+    )
 
     return jsonify(categories), 200
 

@@ -162,6 +162,21 @@ def clear_products_cache():
     if keys:
         redis_client.delete(*keys)
 
+def set_cached_categories(json_data):
+
+    redis_client.set("categories",
+                     json_data,
+                     ex=300
+    )
+
+def get_cached_categories():
+
+    return redis_client.get("categories")
+
+def clear_categories_cache():
+
+    redis_client.delete("categories")
+
 def set_cached_stock(product_id, stock):
 
     redis_client.set(

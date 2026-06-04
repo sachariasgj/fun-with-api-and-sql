@@ -44,10 +44,16 @@ def get_all_categories_from_db():
 
     query = """
         SELECT
-            id,
-            name
-        FROM categories
-        ORDER BY name;
+            c.id,
+            c.name,
+            COUNT(p.id) AS product_count
+        FROM categories c
+        LEFT JOIN products p
+        ON p.category_id = c.id
+        GROUP BY
+            c.id,
+            c.name
+        ORDER BY c.name;
     """
 
     with get_connection() as conn:
@@ -57,8 +63,17 @@ def get_all_categories_from_db():
             
             cur.execute(query)
             rows = cur.fetchall()
+    categories = []
+
+    for row in rows:
+        category = dict(row)
+
+        category["product_count"] = int(
+            category["product_count"]
+        )
+        categories.append(category)
     
-    return [dict(row) for row in rows]
+    return categories
 
 def get_all_products_from_db(category=None, 
                              sort=None, 
